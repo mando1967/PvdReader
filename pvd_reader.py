@@ -5,29 +5,29 @@ from pathlib import Path
 import pythoncom
 import time
 
-class PolytecViewer:
+class PolytecFileReader:
     def __init__(self):
-        self.viewer = None
+        self.file_access = None
         # Initialize COM for the thread
         pythoncom.CoInitialize()
-        self.initialize_viewer()
+        self.initialize_file_access()
     
-    def initialize_viewer(self):
-        """Initialize the Polytec ScanViewer ActiveX control"""
+    def initialize_file_access(self):
+        """Initialize the Polytec PolyFileAccess control"""
         try:
-            # Try to create an instance of the Polytec ScanViewer ActiveX control
-            self.viewer = win32com.client.Dispatch("Polytec.ScanViewer.ScanViewerActiveXLib.ScanViewer")
-            print("Successfully initialized Polytec ScanViewer ActiveX control")
+            # Try to create an instance of the Polytec PolyFileAccess control
+            self.file_access = win32com.client.Dispatch("PolyFileAccess.PolyFileAccess")
+            print("Successfully initialized Polytec PolyFileAccess control")
             
             # Try to get available methods and properties
             print("\nExploring available methods and properties:")
-            for item in dir(self.viewer):
+            for item in dir(self.file_access):
                 if not item.startswith('_'):  # Skip internal attributes
                     print(f"Found: {item}")
             
             return True
         except Exception as e:
-            print(f"Error initializing Polytec ScanViewer: {str(e)}")
+            print(f"Error initializing Polytec PolyFileAccess: {str(e)}")
             return False
     
     def read_pvd_file(self, file_path):
@@ -45,39 +45,27 @@ class PolytecViewer:
             print(f"Error: File {file_path} does not exist")
             return None
         
-        if not self.viewer:
-            if not self.initialize_viewer():
+        if not self.file_access:
+            if not self.initialize_file_access():
                 return None
         
         try:
             print(f"\nAttempting to load file: {file_path}")
             # Try different methods to load the file
             try:
-                success = self.viewer.LoadFile(str(file_path))
-                print("Used LoadFile method")
+                success = self.file_access.OpenFile(str(file_path))
+                print("Used OpenFile method")
             except:
                 try:
-                    success = self.viewer.Open(str(file_path))
+                    success = self.file_access.Open(str(file_path))
                     print("Used Open method")
-                except:
-                    try:
-                        success = self.viewer.OpenFile(str(file_path))
-                        print("Used OpenFile method")
-                    except Exception as e:
-                        print(f"All file loading methods failed: {str(e)}")
-                        return None
+                except Exception as e:
+                    print(f"All file loading methods failed: {str(e)}")
+                    return None
             
-            if success:
-                print(f"Successfully loaded file: {file_path}")
-                # Give the viewer some time to load the file
-                time.sleep(1)
-                
-                # Get file information
-                data = self._extract_file_data()
-                return data
-            else:
-                print(f"Failed to load file: {file_path}")
-                return None
+            # Get file information
+            data = self._extract_file_data()
+            return data
                 
         except Exception as e:
             print(f"Error reading PVD file: {str(e)}")
@@ -88,63 +76,71 @@ class PolytecViewer:
         data = {}
         
         try:
-            # Common properties to try
+            # Common properties to try for PolyFileAccess
             properties_to_try = [
-                # File metadata
-                'FileName', 'FilePath', 'FileType',
+                # File information
+                'FileVersion',
+                'FileType',
+                'FileComment',
                 # Measurement settings
-                'SampleRate', 'NumberOfSamples', 'NumberOfChannels',
-                'MeasurementMode', 'MeasurementType',
-                # Data properties
-                'Channels', 'DataLength', 'Domain',
-                'XAxisLabel', 'YAxisLabel', 'ZAxisLabel',
-                'XAxisUnit', 'YAxisUnit', 'ZAxisUnit',
-                # Specific data arrays
-                'TimeData', 'FrequencyData', 'AmplitudeData',
-                'XData', 'YData', 'ZData',
-                # Additional properties
-                'Version', 'Description', 'Comment'
+                'SamplingFrequency',
+                'NumberOfChannels',
+                'NumberOfSamples',
+                'MeasurementComment',
+                'MeasurementDirection',
+                'SignalType',
+                # Channel information
+                'ChannelComment',
+                'ChannelQuantity',
+                'ChannelUnit',
+                # Signal properties
+                'SignalDomain',
+                'SignalUnit',
+                'SignalQuantity'
             ]
             
             print("\nFile Information:")
             for prop in properties_to_try:
                 try:
-                    value = getattr(self.viewer, prop)
+                    value = getattr(self.file_access, prop)
                     data[prop] = value
                     print(f"{prop}: {value}")
                 except:
                     # Try alternative getter methods
                     try:
                         getter = f"Get{prop}"
-                        value = getattr(self.viewer, getter)()
+                        value = getattr(self.file_access, getter)()
                         data[prop] = value
                         print(f"{prop} (via {getter}): {value}")
                     except:
                         try:
                             getter = f"get_{prop}"
-                            value = getattr(self.viewer, getter)()
+                            value = getattr(self.file_access, getter)()
                             data[prop] = value
                             print(f"{prop} (via {getter}): {value}")
                         except:
                             print(f"Could not retrieve property: {prop}")
             
-            # Try to get any available methods that might provide data
-            print("\nTrying additional methods:")
-            methods_to_try = [
-                'GetData', 'GetAllData', 'GetChannelData',
-                'GetTimeData', 'GetFrequencyData',
-                'GetXData', 'GetYData', 'GetZData',
-                'GetMetadata', 'GetProperties'
-            ]
-            
-            for method in methods_to_try:
-                try:
-                    func = getattr(self.viewer, method)
-                    result = func()
-                    data[method] = result
-                    print(f"Successfully called {method}")
-                except:
-                    print(f"Method not available: {method}")
+            # Try to get signal data
+            try:
+                # Get number of channels and samples
+                num_channels = data.get('NumberOfChannels', 1)
+                num_samples = data.get('NumberOfSamples', 0)
+                
+                if num_samples > 0:
+                    print("\nAttempting to read signal data...")
+                    
+                    # Try different methods to get signal data
+                    try:
+                        # Try to get data for each channel
+                        for channel in range(num_channels):
+                            channel_data = self.file_access.GetSignalData(channel)
+                            data[f'Channel_{channel}_Data'] = channel_data
+                            print(f"Successfully read data for channel {channel}")
+                    except Exception as e:
+                        print(f"Error reading signal data: {str(e)}")
+            except Exception as e:
+                print(f"Error accessing signal data: {str(e)}")
             
         except Exception as e:
             print(f"Error extracting file data: {str(e)}")
@@ -153,18 +149,18 @@ class PolytecViewer:
     
     def close(self):
         """Clean up COM objects"""
-        if self.viewer:
+        if self.file_access:
             try:
-                self.viewer.Close()
+                self.file_access.CloseFile()
             except:
                 pass
-            self.viewer = None
+            self.file_access = None
             # Uninitialize COM
             pythoncom.CoUninitialize()
 
 def main():
-    # Create viewer instance
-    viewer = PolytecViewer()
+    # Create file reader instance
+    reader = PolytecFileReader()
     
     # Get file path from command line or use default
     if len(sys.argv) > 1:
@@ -174,10 +170,10 @@ def main():
         return
     
     # Read the file
-    data = viewer.read_pvd_file(test_file)
+    data = reader.read_pvd_file(test_file)
     
     # Clean up
-    viewer.close()
+    reader.close()
     
     if data:
         print("\nSuccessfully read PVD file")
